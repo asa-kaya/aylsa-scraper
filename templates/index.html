@@ -1,0 +1,659 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AYLSA Scraper - A YouTube Livestream Archive Scraper</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500&display=swap">
+<link rel="stylesheet" href="{{ url_for('static', filename='ytchat.css') }}">
+<style>
+  :root {
+    --bg: #0f0f10; --panel: #1a1a1d; --panel2: #232327; --line: #313136;
+    --text: #ececef; --muted: #9b9ba3; --accent: #ff3b3b; --ok: #3ecf8e; --warn: #f5a524;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 960px; margin: 0 auto; padding: 32px 20px 60px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h1 span { color: var(--accent); }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px; margin-bottom: 18px; }
+  label.lbl { display: block; font-weight: 600; margin-bottom: 6px; }
+  input[type=text] { width: 100%; padding: 11px 13px; border-radius: 8px; border: 1px solid var(--line);
+                     background: var(--panel2); color: var(--text); font-size: 15px; }
+  input[type=text]:focus { outline: 2px solid var(--accent); border-color: transparent; }
+  .row { display: flex; flex-wrap: wrap; gap: 24px; margin-top: 16px; align-items: flex-end; }
+  .opt { display: flex; gap: 6px; }
+  .opt input { display: none; }
+  .opt label { padding: 7px 14px; border: 1px solid var(--line); border-radius: 999px; cursor: pointer;
+               background: var(--panel2); color: var(--muted); user-select: none; }
+  .opt input:checked + label { border-color: var(--accent); color: var(--text); background: #3a1417; }
+  button, .btn { padding: 10px 20px; border-radius: 8px; border: 0; font-weight: 600; font-size: 14px;
+                 cursor: pointer; background: var(--accent); color: #fff; text-decoration: none; display: inline-block; }
+  button:disabled { opacity: .5; cursor: default; }
+  .btn.ghost, button.ghost { background: transparent; border: 1px solid var(--line); color: var(--text); }
+  .grow { flex: 1; }
+  .err { color: #ff8080; margin-top: 12px; white-space: pre-wrap; }
+  .hidden { display: none !important; }
+
+  .video { display: flex; gap: 16px; align-items: center; }
+  .video img { width: 160px; aspect-ratio: 16/9; object-fit: cover; border-radius: 8px; background: var(--panel2); }
+  .video .title { font-weight: 600; font-size: 16px; }
+  .video .meta { color: var(--muted); }
+  .status { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
+            background: var(--panel2); text-transform: uppercase; letter-spacing: .04em; }
+  .status.running, .status.fetching, .status.saving, .status.queued { color: var(--warn); }
+  .status.done { color: var(--ok); }
+  .status.cancelled { color: var(--muted); }
+  .status.error { color: #ff8080; }
+
+  .bar { height: 8px; background: var(--panel2); border-radius: 99px; overflow: hidden; margin: 16px 0 6px; }
+  .bar > div { height: 100%; width: 0; background: var(--accent); transition: width .4s; }
+  .bar.indet > div { width: 30%; animation: slide 1.2s infinite ease-in-out; }
+  @keyframes slide { from { margin-left: -30%; } to { margin-left: 100%; } }
+  .progress-text { display: flex; justify-content: space-between; color: var(--muted); font-size: 13px; }
+
+  .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; margin-top: 16px; }
+  .stat { background: var(--panel2); border-radius: 8px; padding: 10px 12px; }
+  .stat b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; }
+  .stat span { color: var(--muted); font-size: 12px; }
+  .money { margin-top: 10px; color: var(--muted); font-size: 13px; }
+  .money b { color: var(--text); }
+  .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; align-items: center; }
+  .actions a.link { color: var(--muted); }
+
+  .feed { max-height: 420px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+  .msg { padding: 6px 10px; border-radius: 6px; font-size: 13px; word-wrap: break-word; }
+  .msg .t { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 8px; }
+  .msg .a { font-weight: 600; margin-right: 6px; color: #b9b9c3; }
+  .msg .a.owner, td.author .owner { color: #ffd600; }
+  .msg .a.mod, td.author .mod { color: #5e84f1; }
+  .msg .a.member, td.author .member { color: #2ba640; }
+  .msg.paid { color: #000; }
+  .msg.paid .t, .msg.paid .a { color: rgba(0,0,0,.7); }
+  .msg .amt { font-weight: 700; margin-right: 6px; }
+  .msg.membership { background: #0f3d1f; }
+  .msg.gift_purchase, .msg.gift_redemption { background: #13304a; }
+  .msg.system { color: var(--muted); font-style: italic; }
+  .tag { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: rgba(255,255,255,.1); margin-right: 6px; }
+  .empty { color: var(--muted); text-align: center; padding: 20px; }
+
+  .filters { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; margin-bottom: 12px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { padding: 5px 11px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel2);
+          color: var(--muted); cursor: pointer; font-size: 12px; font-weight: 500; }
+  .chip.on { border-color: var(--accent); color: var(--text); background: #3a1417; }
+  .chip.preset { border-style: dashed; color: var(--text); }
+  .filters input[type=search], .filters select { padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line);
+                                                 background: var(--panel2); color: var(--text); font-size: 13px; }
+  .filters input[type=search] { flex: 1; min-width: 200px; }
+  .roles label { color: var(--muted); margin-right: 12px; cursor: pointer; font-size: 13px; white-space: nowrap; }
+  .summary-line { color: var(--muted); margin: 4px 0 10px; }
+  .summary-line b { color: var(--text); }
+  .table-wrap { overflow: auto; max-height: 70vh; border: 1px solid var(--line); border-radius: 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 7px 10px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: var(--panel2); font-weight: 600; white-space: nowrap; position: sticky; top: 0; z-index: 1; }
+  th.sortable { cursor: pointer; user-select: none; }
+  th.sortable:hover { color: var(--accent); }
+  td.time { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.author { white-space: nowrap; }
+  td.author img { width: 20px; height: 20px; border-radius: 50%; vertical-align: middle; margin-right: 6px; }
+  td.msgcell { word-break: break-word; min-width: 240px; }
+  td.amount { font-weight: 700; white-space: nowrap; color: #000; }
+  .pill { font-size: 11px; padding: 2px 7px; border-radius: 4px; background: rgba(255,255,255,.08); white-space: nowrap; }
+  .pill.superchat, .pill.supersticker { background: #5c3a00; color: #ffd27a; }
+  .pill.membership { background: #0f3d1f; color: #7ee2a0; }
+  .pill.gift_purchase, .pill.gift_redemption { background: #13304a; color: #8cc8ff; }
+  .pager { display: flex; gap: 12px; align-items: center; justify-content: flex-end; margin-top: 10px; color: var(--muted); }
+  .pager button { padding: 6px 12px; }
+
+  #tbody tr.clickable { cursor: pointer; }
+  #tbody tr.clickable:hover td { background: rgba(255,255,255,.05); }
+  .modal { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center;
+           padding: 20px; background: rgba(0,0,0,.65); }
+  .modal-box { position: relative; width: 100%; max-width: 440px; max-height: 90vh; overflow: auto;
+               background: #0f0f0f; border: 1px solid var(--line); border-radius: 12px; padding: 32px 24px 16px;
+               box-shadow: 0 20px 60px rgba(0,0,0,.6); }
+  .modal-close { position: absolute; top: 4px; right: 6px; background: transparent; border: 0; color: var(--muted);
+                 font-size: 22px; padding: 4px 10px; }
+  .modal-close:hover { color: var(--text); }
+  #yt-card { display: flex; justify-content: center; }
+  .modal-meta { display: grid; gap: 4px; margin-top: 18px; color: var(--muted); font-size: 13px; }
+  .modal-meta b { color: var(--text); font-weight: 500; }
+  .modal-meta a { color: #8ab4f8; }
+  .modal-nav { display: flex; justify-content: space-between; margin-top: 14px; color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1><span>&#9654;</span> AYLSA Scraper</h1>
+  <p class="sub"><b>A YouTube Livestream Archive Scraper.</b> Grab the full live chat history of an archived livestream or premiere, including Super Chats, Super Stickers, memberships and gifted memberships.</p>
+
+  <form id="form" class="card">
+    <label class="lbl" for="url">Stream URL</label>
+    <input type="text" id="url" placeholder="https://www.youtube.com/watch?v=... or /live/..." required autocomplete="off">
+    <div class="row">
+      <div>
+        <label class="lbl">Chat</label>
+        <div class="opt">
+          <input type="radio" name="chat_type" id="ct-all" value="all" checked><label for="ct-all">All messages</label>
+          <input type="radio" name="chat_type" id="ct-top" value="top"><label for="ct-top">Top chat only</label>
+        </div>
+      </div>
+      <div>
+        <label class="lbl">Save as</label>
+        <div class="opt">
+          <input type="radio" name="format" id="f-json" value="json" checked><label for="f-json">JSON</label>
+          <input type="radio" name="format" id="f-csv" value="csv"><label for="f-csv">CSV</label>
+        </div>
+      </div>
+      <div class="grow"></div>
+      <button type="submit" id="start">Start scraping</button>
+    </div>
+    <div id="form-error" class="err hidden"></div>
+  </form>
+
+  <section id="job" class="card hidden">
+    <div class="video">
+      <img id="thumb" alt="">
+      <div>
+        <div class="title" id="title">Loading video info…</div>
+        <div class="meta" id="channel"></div>
+        <div style="margin-top:6px"><span class="status" id="status">queued</span></div>
+      </div>
+    </div>
+
+    <div class="bar" id="bar"><div></div></div>
+    <div class="progress-text"><span id="pos"></span><span id="elapsed"></span></div>
+
+    <div class="stats" id="stats"></div>
+    <div class="money" id="money"></div>
+    <div id="job-error" class="err hidden"></div>
+
+    <div class="actions">
+      <button type="button" class="ghost" id="cancel">Stop &amp; keep what's collected</button>
+      <a class="btn hidden" id="download" href="#">Download</a>
+      <a class="link hidden" id="download-alt" href="#"></a>
+    </div>
+  </section>
+
+  <section id="feed-card" class="card hidden">
+    <label class="lbl">Latest messages</label>
+    <div class="feed" id="feed"><div class="empty">Waiting for messages…</div></div>
+  </section>
+
+  <section id="results" class="card hidden">
+    <label class="lbl">Results</label>
+    <div class="filters">
+      <div class="chips" id="type-chips"></div>
+      <button type="button" class="chip preset" id="paid-only">$ Paid only</button>
+      <button type="button" class="chip preset" id="reset-filters">Reset</button>
+    </div>
+    <div class="filters">
+      <input type="search" id="q" placeholder="Search author or message…" autocomplete="off">
+      <div class="roles" id="roles"></div>
+      <select id="currency"><option value="">Any currency</option></select>
+    </div>
+    <div class="summary-line" id="summary-line"></div>
+    <div class="table-wrap" id="table-wrap">
+      <table><thead><tr id="thead-row"></tr></thead><tbody id="tbody"></tbody></table>
+    </div>
+    <div class="pager">
+      <button type="button" class="ghost" id="prev">« Prev</button>
+      <span id="page-info"></span>
+      <button type="button" class="ghost" id="next">Next »</button>
+    </div>
+    <div class="actions">
+      <a class="btn ghost" id="dl-f-json" href="#">Download filtered JSON</a>
+      <a class="btn ghost" id="dl-f-csv" href="#">Download filtered CSV</a>
+    </div>
+  </section>
+</main>
+
+<div id="modal" class="modal hidden">
+  <div class="modal-box" role="dialog" aria-modal="true" aria-label="Chat message">
+    <button type="button" class="modal-close" id="modal-close" aria-label="Close">×</button>
+    <div id="yt-card"></div>
+    <div class="modal-meta" id="modal-meta"></div>
+    <div class="modal-nav"><span>← → browse · Esc close</span><span id="modal-pos"></span></div>
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='ytchat.js') }}"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const STAT_LABELS = [
+  ["total", "Messages"], ["superchat", "Super Chats"], ["supersticker", "Super Stickers"],
+  ["membership", "Memberships"], ["gifts", "Gifted members"], ["authors", "Unique chatters"],
+];
+const ACTIVE = ["queued", "fetching", "running", "saving"];
+let jobId = null, pollTimer = null;
+
+function fmtTime(ms) {
+  if (ms == null) return "";
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60;
+  const pad = (n) => String(n).padStart(2, "0");
+  return h ? `${h}:${pad(m)}:${pad(sec)}` : `${m}:${pad(sec)}`;
+}
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+
+$("form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  $("form-error").classList.add("hidden");
+  const body = {
+    url: $("url").value.trim(),
+    format: document.querySelector("input[name=format]:checked").value,
+    chat_type: document.querySelector("input[name=chat_type]:checked").value,
+  };
+  $("start").disabled = true;
+  try {
+    const res = await fetch("/api/jobs", {
+      method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Failed to start");
+    startJob(data.id);
+  } catch (e) {
+    $("form-error").textContent = e.message;
+    $("form-error").classList.remove("hidden");
+    $("start").disabled = false;
+  }
+});
+
+function startJob(id) {
+  jobId = id;
+  $("job").classList.remove("hidden");
+  $("feed-card").classList.remove("hidden");
+  $("title").textContent = "Loading video info…";
+  $("channel").textContent = "";
+  $("thumb").removeAttribute("src");
+  $("feed").replaceChildren(el("div", "empty", "Waiting for messages…"));
+  ["download", "download-alt", "job-error"].forEach((i) => $(i).classList.add("hidden"));
+  $("cancel").classList.remove("hidden");
+  $("cancel").disabled = false;
+  $("results").classList.add("hidden");
+  resultsJob = null;
+  clearInterval(pollTimer);
+  poll();
+  pollTimer = setInterval(poll, 1000);
+}
+
+$("cancel").addEventListener("click", async () => {
+  if (!jobId) return;
+  $("cancel").disabled = true;
+  await fetch(`/api/jobs/${jobId}/cancel`, {method: "POST"});
+});
+
+async function poll() {
+  const id = jobId;
+  let job;
+  try {
+    const res = await fetch(`/api/jobs/${id}`);
+    if (!res.ok) throw new Error("Job not found (server restarted?)");
+    job = await res.json();
+  } catch (e) {
+    clearInterval(pollTimer);
+    $("job-error").textContent = e.message;
+    $("job-error").classList.remove("hidden");
+    $("start").disabled = false;
+    return;
+  }
+  if (id !== jobId) return;
+  render(job);
+  if (!ACTIVE.includes(job.status)) {
+    clearInterval(pollTimer);
+    $("start").disabled = false;
+  }
+}
+
+function render(job) {
+  const v = job.video;
+  if (v) {
+    $("title").textContent = v.title || v.video_id;
+    $("channel").textContent = `${v.channel} · ${v.chat_type}`;
+    if (!$("thumb").src) $("thumb").src = v.thumbnail;
+  }
+  const st = $("status");
+  st.textContent = job.status;
+  st.className = "status " + job.status;
+
+  const bar = $("bar");
+  const active = ACTIVE.includes(job.status);
+  if (job.progress == null) {
+    bar.classList.toggle("indet", active);
+    bar.firstElementChild.style.width = active ? "" : "100%";
+  } else {
+    bar.classList.remove("indet");
+    bar.firstElementChild.style.width = (job.progress * 100).toFixed(1) + "%";
+  }
+  const dur = v && v.duration_seconds ? " / " + fmtTime(v.duration_seconds * 1000) : "";
+  $("pos").textContent = job.status === "fetching" || job.status === "queued"
+    ? "Reading video page…"
+    : `Stream position ${fmtTime(job.offset_ms)}${dur}` + (job.progress != null ? ` (${(job.progress * 100).toFixed(1)}%)` : "");
+  $("elapsed").textContent = `Elapsed ${fmtTime(job.elapsed * 1000)}`;
+
+  const s = job.stats, bt = s.by_type || {};
+  const values = {
+    total: s.total_messages, superchat: bt.superchat || 0, supersticker: bt.supersticker || 0,
+    membership: bt.membership || 0, gifts: s.gifted_memberships, authors: s.unique_authors,
+  };
+  $("stats").replaceChildren(...STAT_LABELS.map(([k, label]) => {
+    const d = el("div", "stat");
+    d.append(el("b", null, (values[k] || 0).toLocaleString()), el("span", null, label));
+    return d;
+  }));
+
+  const money = Object.entries(s.paid_totals_by_currency || {});
+  const m = $("money");
+  m.replaceChildren();
+  if (money.length) {
+    m.append("Paid totals: ");
+    money.forEach(([cur, amt], i) => {
+      if (i) m.append(" · ");
+      m.append(el("b", null, `${cur}${amt.toLocaleString(undefined, {maximumFractionDigits: 2})}`));
+    });
+  }
+
+  if (job.status === "error") {
+    $("job-error").textContent = job.error;
+    $("job-error").classList.remove("hidden");
+  }
+
+  const finished = job.status === "done" || job.status === "cancelled";
+  $("cancel").classList.toggle("hidden", !active);
+  if (finished && job.file) {
+    const other = job.format === "json" ? "csv" : "json";
+    const dl = $("download");
+    dl.href = `/api/jobs/${job.id}/download?format=${job.format}`;
+    dl.textContent = `Download ${job.format.toUpperCase()} (${s.total_messages.toLocaleString()} messages)`;
+    dl.classList.remove("hidden");
+    const alt = $("download-alt");
+    alt.href = `/api/jobs/${job.id}/download?format=${other}`;
+    alt.textContent = `also download as ${other.toUpperCase()}`;
+    alt.classList.remove("hidden");
+    if (job.status === "cancelled") $("pos").textContent += " — stopped early, file contains partial chat";
+  }
+
+  renderFeed(job.recent);
+  if (finished && job.file && resultsJob !== job.id) openResults(job.id, job.video);
+}
+
+function renderFeed(msgs) {
+  const feed = $("feed");
+  if (!msgs.length) return;
+  const nearBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 40;
+  feed.replaceChildren(...msgs.map(renderMsg));
+  if (nearBottom) feed.scrollTop = feed.scrollHeight;
+}
+
+function renderMsg(m) {
+  const paid = m.type === "superchat" || m.type === "supersticker";
+  const d = el("div", `msg ${m.type}${paid ? " paid" : ""}`);
+  if (paid && m.color) d.style.background = m.color;
+  d.append(el("span", "t", m.time_in_video));
+  if (m.type !== "text_message" && !paid && m.type !== "system") d.append(el("span", "tag", m.type.replace("_", " ")));
+  if (paid) d.append(el("span", "amt", m.amount_text));
+  if (m.author_name) d.append(el("span", "a " + roleClass(m), m.author_name));
+  d.append(document.createTextNode(messageText(m)));
+  return d;
+}
+
+function roleClass(m) {
+  return m.is_owner ? "owner" : m.is_moderator ? "mod" : m.is_member ? "member" : "";
+}
+
+function messageText(m) {
+  return [m.header_text, m.message, m.sticker_label ? `[sticker: ${m.sticker_label}]` : ""]
+    .filter(Boolean).join(" — ");
+}
+
+// ---------------------------------------------------------------- results table
+const TYPES = [
+  ["text_message", "Text"], ["superchat", "Super Chat"], ["supersticker", "Super Sticker"],
+  ["membership", "Membership"], ["gift_purchase", "Gift purchase"], ["gift_redemption", "Gift redemption"],
+  ["system", "System"],
+];
+const ROLES = [["owner", "Owner"], ["moderator", "Moderator"], ["member", "Member"], ["verified", "Verified"]];
+const COLUMNS = [["time", "Time", true], ["type", "Type", true], ["author", "Author", true],
+                 ["message", "Message", false], ["amount", "Amount", true]];
+const PAGE = 100;
+const view = {types: new Set(), roles: new Set(), q: "", currency: "", sort: "time", order: "asc", offset: 0};
+let resultsJob = null, resultsVideo = null, qTimer = null, loadSeq = 0;
+let currentRows = [], lastTotal = 0, modalIndex = -1;
+
+function typeLabel(t) {
+  const found = TYPES.find(([k]) => k === t);
+  return found ? found[1] : t;
+}
+
+function filterParams() {
+  const p = new URLSearchParams();
+  if (view.types.size) p.set("types", [...view.types].join(","));
+  if (view.roles.size) p.set("roles", [...view.roles].join(","));
+  if (view.q) p.set("q", view.q);
+  if (view.currency) p.set("currency", view.currency);
+  p.set("sort", view.sort);
+  p.set("order", view.order);
+  return p;
+}
+
+function openResults(id, video) {
+  resultsJob = id;
+  resultsVideo = video;
+  resetView();
+  $("feed-card").classList.add("hidden");
+  $("results").classList.remove("hidden");
+  loadResults();
+}
+
+function resetView() {
+  Object.assign(view, {types: new Set(), roles: new Set(), q: "", currency: "", sort: "time", order: "asc", offset: 0});
+  $("q").value = "";
+  syncControls();
+}
+
+function syncControls() {
+  document.querySelectorAll("#type-chips .chip").forEach((c) => c.classList.toggle("on", view.types.has(c.dataset.type)));
+  document.querySelectorAll("#roles input").forEach((i) => { i.checked = view.roles.has(i.value); });
+}
+
+function applyFilters() {
+  view.offset = 0;
+  syncControls();
+  loadResults();
+}
+
+async function loadResults() {
+  if (!resultsJob) return;
+  const seq = ++loadSeq;
+  const p = filterParams();
+  p.set("offset", view.offset);
+  p.set("limit", PAGE);
+  const res = await fetch(`/api/jobs/${resultsJob}/messages?${p}`);
+  if (!res.ok || seq !== loadSeq) return;  // drop stale responses
+  renderResults(await res.json());
+}
+
+function renderHead() {
+  $("thead-row").replaceChildren(...COLUMNS.map(([key, label, sortable]) => {
+    const arrow = view.sort === key ? (view.order === "asc" ? " ▲" : " ▼") : "";
+    const th = el("th", sortable ? "sortable" : "", label + arrow);
+    if (sortable) th.addEventListener("click", () => {
+      if (view.sort === key) view.order = view.order === "asc" ? "desc" : "asc";
+      else { view.sort = key; view.order = key === "amount" ? "desc" : "asc"; }
+      view.offset = 0;
+      loadResults();
+    });
+    return th;
+  }));
+}
+
+function renderRow(m, i) {
+  const tr = el("tr", "clickable");
+  tr.addEventListener("click", () => openMessage(i));
+  tr.append(el("td", "time", m.time_in_video));
+  const type = el("td");
+  type.append(el("span", `pill ${m.type}`, typeLabel(m.type)));
+  const author = el("td", "author");
+  if (m.author_photo) {
+    const img = el("img");
+    img.src = m.author_photo; img.alt = ""; img.loading = "lazy"; img.referrerPolicy = "no-referrer";
+    author.append(img);
+  }
+  author.append(el("span", roleClass(m), m.author_name));
+  const amount = el("td", "amount", m.amount_text);
+  if (m.amount_text && m.color) amount.style.background = m.color;
+  tr.append(type, author, el("td", "msgcell", messageText(m)), amount);
+  return tr;
+}
+
+function renderResults(d) {
+  renderHead();
+
+  const sel = $("currency");
+  const any = el("option", null, "Any currency");
+  any.value = "";
+  sel.replaceChildren(any, ...d.currencies.map((c) => el("option", null, c)));
+  sel.value = view.currency;
+
+  const s = d.summary, line = $("summary-line");
+  line.replaceChildren(el("b", null, d.total.toLocaleString()), ` matching message${d.total === 1 ? "" : "s"}`);
+  const money = Object.entries(s.paid_totals_by_currency);
+  if (money.length) {
+    line.append(" · paid total ");
+    line.append(el("b", null, money.map(([c, a]) =>
+      `${c}${a.toLocaleString(undefined, {maximumFractionDigits: 2})}`).join(" + ")));
+  }
+  if (s.gifted_memberships) line.append(` · ${s.gifted_memberships.toLocaleString()} gifted memberships`);
+  line.append(` · ${s.unique_authors.toLocaleString()} chatters`);
+
+  currentRows = d.rows;
+  lastTotal = d.total;
+  const tbody = $("tbody");
+  if (d.rows.length) {
+    tbody.replaceChildren(...d.rows.map(renderRow));
+  } else {
+    const td = el("td", "empty", "No messages match these filters.");
+    td.colSpan = COLUMNS.length;
+    const tr = el("tr");
+    tr.append(td);
+    tbody.replaceChildren(tr);
+  }
+  $("table-wrap").scrollTop = 0;
+
+  const from = d.total ? d.offset + 1 : 0, to = Math.min(d.offset + d.rows.length, d.total);
+  $("page-info").textContent = `${from.toLocaleString()}–${to.toLocaleString()} of ${d.total.toLocaleString()}`;
+  $("prev").disabled = d.offset === 0;
+  $("next").disabled = d.offset + d.limit >= d.total;
+
+  const base = `/api/jobs/${resultsJob}/download?filtered=1&${filterParams()}`;
+  $("dl-f-json").href = base + "&format=json";
+  $("dl-f-csv").href = base + "&format=csv";
+  $("dl-f-json").textContent = `Download filtered JSON (${d.total.toLocaleString()})`;
+  $("dl-f-csv").textContent = `Download filtered CSV (${d.total.toLocaleString()})`;
+}
+
+TYPES.forEach(([t, label]) => {
+  const chip = el("button", "chip", label);
+  chip.type = "button";
+  chip.dataset.type = t;
+  chip.addEventListener("click", () => {
+    if (view.types.has(t)) view.types.delete(t); else view.types.add(t);
+    applyFilters();
+  });
+  $("type-chips").append(chip);
+});
+
+ROLES.forEach(([r, label]) => {
+  const lab = el("label"), cb = el("input");
+  cb.type = "checkbox";
+  cb.value = r;
+  cb.addEventListener("change", () => {
+    if (cb.checked) view.roles.add(r); else view.roles.delete(r);
+    applyFilters();
+  });
+  lab.append(cb, " " + label);
+  $("roles").append(lab);
+});
+
+$("paid-only").addEventListener("click", () => {
+  Object.assign(view, {types: new Set(["superchat", "supersticker"]), sort: "amount", order: "desc"});
+  applyFilters();
+});
+$("reset-filters").addEventListener("click", () => { resetView(); loadResults(); });
+$("q").addEventListener("input", () => {
+  clearTimeout(qTimer);
+  qTimer = setTimeout(() => { view.q = $("q").value.trim(); applyFilters(); }, 300);
+});
+$("currency").addEventListener("change", () => { view.currency = $("currency").value; applyFilters(); });
+$("prev").addEventListener("click", () => { view.offset = Math.max(0, view.offset - PAGE); loadResults(); });
+$("next").addEventListener("click", () => { view.offset += PAGE; loadResults(); });
+
+// ---------------------------------------------------------------- message popup
+function link(href, text) {
+  const a = el("a", null, text);
+  a.href = href;
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+  return a;
+}
+
+function openMessage(i) {
+  const m = currentRows[i];
+  if (!m) return;
+  modalIndex = i;
+  $("yt-card").replaceChildren(YtChat.render(m));
+
+  const meta = $("modal-meta");
+  meta.replaceChildren();
+  const addRow = (label, value) => {
+    const d = el("div");
+    d.append(el("b", null, label + ": "), value);
+    meta.append(d);
+  };
+  if (m.timestamp) addRow("Sent", new Date(m.timestamp).toLocaleString());
+  if (m.time_in_video) addRow("Stream time", m.time_in_video);
+  if (m.author_badges && m.author_badges.length) addRow("Badges", m.author_badges.join(", "));
+
+  const links = el("div");
+  if (resultsVideo) {
+    const t = Math.max(0, Math.floor((m.video_offset_ms || 0) / 1000));
+    links.append(link(`https://www.youtube.com/watch?v=${resultsVideo.video_id}&t=${t}s`,
+                      `Open stream at ${m.time_in_video || "0:00"}`));
+  }
+  if (m.author_channel_id) {
+    if (links.childNodes.length) links.append(" · ");
+    links.append(link(`https://www.youtube.com/channel/${m.author_channel_id}`, "Author's channel"));
+  }
+  if (links.childNodes.length) meta.append(links);
+
+  $("modal-pos").textContent = `${(view.offset + i + 1).toLocaleString()} of ${lastTotal.toLocaleString()}`;
+  $("modal").classList.remove("hidden");
+}
+
+function closeMessage() {
+  $("modal").classList.add("hidden");
+  modalIndex = -1;
+}
+
+$("modal-close").addEventListener("click", closeMessage);
+$("modal").addEventListener("click", (e) => { if (e.target === $("modal")) closeMessage(); });
+document.addEventListener("keydown", (e) => {
+  if (modalIndex < 0) return;
+  if (e.key === "Escape") closeMessage();
+  else if (e.key === "ArrowRight" && modalIndex < currentRows.length - 1) openMessage(modalIndex + 1);
+  else if (e.key === "ArrowLeft" && modalIndex > 0) openMessage(modalIndex - 1);
+});
+</script>
+</body>
+</html>
