@@ -94,6 +94,12 @@ The server only listens on your own machine (`127.0.0.1`); it is not reachable f
 5. **Download** the file when it finishes. A second link lets you download the other format as well.
    Files are also saved to the `downloads/` folder.
 6. **Explore the results table** that appears after the run:
+   - The **hot-spot graph** above the table shows how many chats arrive in the ~30 seconds
+     after each moment of the stream, so busy stretches stand out as spikes that mark where a burst starts (the top 5 are marked). It follows every filter
+     except the time range, so searching `lol` shows where the lols are. Hover for time and count,
+     **click** to clear the time filter and jump the table to that moment (the table switches to time
+     order if needed), **drag** across a spike to set From / To, or click a peak dot to zoom the table
+     to it.
    - Toggle message-type chips (Text, Super Chat, Super Sticker, Membership, Gift purchase,
      Gift redemption, System).
    - **$ Paid only** shows Super Chats + Super Stickers, highest amount first. **Reset** clears filters.

@@ -5,12 +5,14 @@ Run:  python app.py   then open http://127.0.0.1:5000
 
 from __future__ import annotations
 
+import math
 import re
 import threading
 import time
 import traceback
 import uuid
 from collections import deque
+from itertools import accumulate
 from pathlib import Path
 
 from flask import Flask, abort, jsonify, render_template, request, send_file
@@ -24,6 +26,9 @@ DOWNLOAD_DIR.mkdir(exist_ok=True)
 ROLES = ("owner", "moderator", "member", "verified")
 SEARCH_FIELDS = ("author_name", "message", "header_text", "sticker_label")
 MAX_PAGE = 500
+DENSITY_BINS = 300
+DENSITY_PEAKS = 5
+WINDOW_MIN_MS = 30_000  # hot-spot graph counts chats in (at least) the next 30s
 
 app = Flask(__name__)
 jobs: dict[str, "Job"] = {}
@@ -51,15 +56,16 @@ def _parse_offset(value) -> int | None:
     return secs * 1000
 
 
-def filter_messages(messages: list[dict], args) -> list[dict]:
+def filter_messages(messages: list[dict], args, use_time: bool = True) -> list[dict]:
     """Filter and sort messages by the table's query params
-    (types, roles, q, currency, hide_emoji, from, to, sort, order)."""
+    (types, roles, q, currency, hide_emoji, from, to, sort, order).
+    use_time=False ignores the from/to stream-time range."""
     types = _csv_arg(args, "types")
     roles = _csv_arg(args, "roles") & set(ROLES)
     query = (args.get("q") or "").strip().casefold()
     currency = args.get("currency") or ""
     hide_emoji = args.get("hide_emoji") == "1"
-    start, end = _parse_offset(args.get("from")), _parse_offset(args.get("to"))
+    start, end = (_parse_offset(args.get("from")), _parse_offset(args.get("to"))) if use_time else (None, None)
 
     def keep(m):
         if types and m["type"] not in types:
@@ -225,13 +231,72 @@ def job_messages(job_id):
     rows = filter_messages(snapshot, request.args)
     offset = max(request.args.get("offset", 0, type=int), 0)
     limit = min(max(request.args.get("limit", 100, type=int), 1), MAX_PAGE)
+    # "at" (stream ms, from a hot-spot graph click): return the page holding the first row at
+    # that moment, and its index on the page as "focus". Assumes rows are in time order.
+    focus = None
+    at = request.args.get("at", type=int)
+    if at is not None and rows:
+        desc = request.args.get("order") == "desc"
+        idx = next((i for i, m in enumerate(rows) if m["video_offset_ms"] is not None
+                    and (m["video_offset_ms"] <= at if desc else m["video_offset_ms"] >= at)),
+                   len(rows) - 1)
+        offset = idx // limit * limit
+        focus = idx - offset
     return jsonify(
         total=len(rows),
         offset=offset,
         limit=limit,
+        focus=focus,
         summary=stats_for(rows),
         currencies=sorted({m["currency"] for m in snapshot if m["currency"]}),
         rows=rows[offset:offset + limit],
+    )
+
+
+@app.get("/api/jobs/<job_id>/density")
+def job_density(job_id):
+    """Chat activity over stream time for the hot-spot graph. Honors every table filter
+    except the from/to range, so the graph always spans the whole stream."""
+    job = get_job(job_id)
+    rows = filter_messages(list(job.messages), request.args, use_time=False)
+    # Pre-stream chat (negative offset) is folded into 0:00.
+    offsets = [max(int(m["video_offset_ms"]), 0) for m in rows if m["video_offset_ms"] is not None]
+    bins = min(max(request.args.get("bins", DENSITY_BINS, type=int), 50), 1000)
+    duration_ms = ((job.video or {}).get("duration_seconds") or 0) * 1000
+    span = max(duration_ms, max(offsets, default=0) + 1)
+    bucket = math.ceil(span / bins)
+
+    counts = [0] * bins
+    for off in offsets:
+        counts[min(off // bucket, bins - 1)] += 1
+    # Forward-looking: nearby[i] = messages in the k buckets starting at bucket i, via prefix
+    # sums. A spike therefore marks where a burst starts, not its middle. k >= 2 so a burst
+    # straddling a bucket edge isn't split in half on long streams (coarse buckets).
+    k = max(2, math.ceil(WINDOW_MIN_MS / bucket))
+    prefix = list(accumulate(counts, initial=0))
+    nearby = [prefix[min(i + k, bins)] - prefix[i] for i in range(bins)]
+
+    # Top local maxima (earliest bucket of a plateau), each a full window away from any higher peak.
+    candidates = sorted(
+        (i for i in range(bins)
+         if nearby[i] and nearby[i] >= (nearby[i - 1] if i else 0)
+         and nearby[i] >= (nearby[i + 1] if i + 1 < bins else 0)),
+        key=lambda i: -nearby[i])
+    picked: list[int] = []
+    for i in candidates:
+        if all(abs(i - p) >= k for p in picked):
+            picked.append(i)
+            if len(picked) == DENSITY_PEAKS:
+                break
+
+    return jsonify(
+        bucket_ms=bucket,
+        window_ms=k * bucket,
+        span_ms=span,
+        counts=counts,
+        nearby=nearby,
+        peaks=[{"offset_ms": i * bucket, "count": nearby[i]} for i in picked],
+        total=len(offsets),
     )
 
 

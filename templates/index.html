@@ -94,6 +94,24 @@
   .filters input.time-in.bad { border-color: #ff8080; }
   .trange { color: var(--muted); white-space: nowrap; }
   .roles label { color: var(--muted); margin-right: 12px; cursor: pointer; font-size: 13px; white-space: nowrap; }
+  .density { position: relative; margin: 4px 0 10px; padding: 6px 8px 6px; background: var(--panel2);
+             border: 1px solid var(--line); border-radius: 8px; }
+  .density svg { display: block; width: 100%; cursor: crosshair; touch-action: none; user-select: none;
+                 transition: opacity .2s; }
+  .density.loading svg { opacity: .5; }
+  .density .grid { stroke: var(--line); stroke-width: 1; }
+  .density .axis-t { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .density .area { fill: var(--accent); fill-opacity: .14; }
+  .density .line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+  .density .range { fill: #fff; fill-opacity: .07; }
+  .density .brush { fill: var(--accent); fill-opacity: .2; }
+  .density .guide { stroke: var(--muted); stroke-width: 1; }
+  .density .peak { fill: var(--accent); stroke: var(--panel2); stroke-width: 2; pointer-events: none; }
+  .density .peak-hit { fill: transparent; cursor: pointer; }
+  .density-tip { position: absolute; top: 6px; pointer-events: none; background: #0f0f0f; border: 1px solid var(--line);
+                 border-radius: 6px; padding: 3px 8px; font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .density-tip b { color: var(--text); font-size: 13px; }
+  .density-cap { color: var(--muted); font-size: 12px; }
   .summary-line { color: var(--muted); margin: 4px 0 10px; }
   .summary-line b { color: var(--text); }
   .table-wrap { overflow: auto; max-height: 70vh; border: 1px solid var(--line); border-radius: 8px; }
@@ -116,6 +134,8 @@
 
   #tbody tr.clickable { cursor: pointer; }
   #tbody tr.clickable:hover td { background: rgba(255,255,255,.05); }
+  #tbody td { transition: background .8s; }
+  #tbody tr.focus td { background: rgba(255,59,59,.2); transition: none; }
   .modal { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center;
            padding: 20px; background: rgba(0,0,0,.65); }
   .modal-box { position: relative; width: 100%; max-width: 440px; max-height: 90vh; overflow: auto;
@@ -205,6 +225,11 @@
         <input type="text" id="t-from" class="time-in" placeholder="From 0:00" autocomplete="off"> –
         <input type="text" id="t-to" class="time-in" placeholder="To" autocomplete="off">
       </div>
+    </div>
+    <div class="density" id="density">
+      <svg id="density-svg" role="img" aria-label="Chat activity over stream time"></svg>
+      <div class="density-tip hidden" id="density-tip"></div>
+      <div class="density-cap" id="density-cap"></div>
     </div>
     <div class="summary-line" id="summary-line"></div>
     <div class="table-wrap" id="table-wrap">
@@ -439,7 +464,7 @@ const PAGE = 100;
 const TIME_RE = /^\d+(:\d+){0,2}$/;
 const view = {types: new Set(), roles: new Set(), q: "", currency: "", hideEmoji: false, tFrom: "", tTo: "",
               sort: "time", order: "asc", offset: 0};
-let resultsJob = null, resultsVideo = null, qTimer = null, tTimer = null, loadSeq = 0;
+let resultsJob = null, resultsVideo = null, qTimer = null, tTimer = null, loadSeq = 0, pendingJump = null;
 let currentRows = [], lastTotal = 0, modalIndex = -1;
 
 function typeLabel(t) {
@@ -468,7 +493,10 @@ function openResults(id, video) {
   resetView();
   $("feed-card").classList.add("hidden");
   $("results").classList.remove("hidden");
+  density = null;
+  renderDensity();
   loadResults();
+  loadDensity();
 }
 
 function resetView() {
@@ -488,10 +516,12 @@ function syncControls() {
   $("hide-emoji").classList.toggle("on", view.hideEmoji);
 }
 
-function applyFilters() {
+// The hot-spot graph ignores the time range, so range edits only redraw its shading.
+function applyFilters(refetchDensity = true) {
   view.offset = 0;
   syncControls();
   loadResults();
+  if (refetchDensity) loadDensity(); else renderDensity();
 }
 
 async function loadResults() {
@@ -500,6 +530,10 @@ async function loadResults() {
   const p = filterParams();
   p.set("offset", view.offset);
   p.set("limit", PAGE);
+  if (pendingJump != null) {  // server picks the page and returns the row index as "focus"
+    p.set("at", pendingJump);
+    pendingJump = null;
+  }
   const res = await fetch(`/api/jobs/${resultsJob}/messages?${p}`);
   if (!res.ok || seq !== loadSeq) return;  // drop stale responses
   renderResults(await res.json());
@@ -570,7 +604,16 @@ function renderResults(d) {
     tr.append(td);
     tbody.replaceChildren(tr);
   }
-  $("table-wrap").scrollTop = 0;
+  const wrap = $("table-wrap");
+  wrap.scrollTop = 0;
+  view.offset = d.offset;  // a jump may have moved to another page
+  if (d.focus != null && d.rows[d.focus]) {
+    const row = tbody.children[d.focus];
+    wrap.scrollIntoView({block: "nearest"});
+    wrap.scrollTop = row.offsetTop - wrap.clientHeight / 3;
+    row.classList.add("focus");
+    setTimeout(() => row.classList.remove("focus"), 1500);
+  }
 
   const from = d.total ? d.offset + 1 : 0, to = Math.min(d.offset + d.rows.length, d.total);
   $("page-info").textContent = `${from.toLocaleString()}–${to.toLocaleString()} of ${d.total.toLocaleString()}`;
@@ -612,7 +655,7 @@ $("paid-only").addEventListener("click", () => {
   applyFilters();
 });
 $("hide-emoji").addEventListener("click", () => { view.hideEmoji = !view.hideEmoji; applyFilters(); });
-$("reset-filters").addEventListener("click", () => { resetView(); loadResults(); });
+$("reset-filters").addEventListener("click", () => { resetView(); loadResults(); loadDensity(); });
 $("q").addEventListener("input", () => {
   clearTimeout(qTimer);
   qTimer = setTimeout(() => { view.q = $("q").value.trim(); applyFilters(); }, 300);
@@ -625,7 +668,7 @@ function readTimeRange() {
     $(id).classList.toggle("bad", v !== "" && !TIME_RE.test(v));
     view[key] = v;
   }
-  applyFilters();
+  applyFilters(false);
 }
 ["t-from", "t-to"].forEach((id) => $(id).addEventListener("input", () => {
   clearTimeout(tTimer);
@@ -633,6 +676,203 @@ function readTimeRange() {
 }));
 $("prev").addEventListener("click", () => { view.offset = Math.max(0, view.offset - PAGE); loadResults(); });
 $("next").addEventListener("click", () => { view.offset += PAGE; loadResults(); });
+
+// ---------------------------------------------------------------- hot-spot graph
+const SVG_NS = "http://www.w3.org/2000/svg";
+const DENS_H = 130, DENS_PAD = {l: 4, r: 4, t: 10, b: 18};
+const X_STEPS = [10, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600].map((s) => s * 1000);
+let density = null, densSeq = 0, densScale = null, densEls = null, drag = null, densResize = null;
+
+function svgEl(tag, attrs, text) {
+  const e = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, v);
+  if (text != null) e.textContent = text;
+  return e;
+}
+
+function niceStep(v) {
+  if (v <= 1) return 1;
+  const p = 10 ** Math.floor(Math.log10(v));
+  return [1, 2, 5, 10].map((m) => m * p).find((s) => s >= v);
+}
+
+function fmtSpan(ms) {
+  const s = Math.round(ms / 1000);
+  return s < 120 ? `${s}s` : `${Math.round(s / 60)} min`;
+}
+
+function parseTime(v) {  // same rules as app._parse_offset
+  return TIME_RE.test(v) ? v.split(":").reduce((s, p) => s * 60 + Number(p), 0) * 1000 : null;
+}
+
+async function loadDensity() {
+  if (!resultsJob) return;
+  const seq = ++densSeq;
+  $("density").classList.add("loading");  // keep the old render, dimmed, while refetching
+  const res = await fetch(`/api/jobs/${resultsJob}/density?${filterParams()}`);
+  if (!res.ok || seq !== densSeq) return;
+  density = await res.json();
+  $("density").classList.remove("loading");
+  renderDensity();
+}
+
+function renderDensity() {
+  const svg = $("density-svg");
+  svg.setAttribute("height", DENS_H);
+  $("density-tip").classList.add("hidden");
+  if (!density) {
+    svg.replaceChildren();
+    $("density-cap").textContent = "Loading chat activity…";
+    return;
+  }
+  const d = density, w = svg.clientWidth || 600;
+  const {l, r, t, b} = DENS_PAD, pw = w - l - r, ph = DENS_H - t - b;
+  const top = Math.max(1, ...d.nearby) * 1.15;  // headroom above the tallest spike
+  const x = (ms) => l + Math.min(ms / d.span_ms, 1) * pw;
+  const y = (v) => t + (1 - v / top) * ph;
+  const r1 = (n) => Math.round(n * 10) / 10;
+  densScale = {x, w};
+  const kids = [];
+
+  const ystep = niceStep(top / 3);
+  for (let v = ystep; v < top; v += ystep) {
+    kids.push(svgEl("line", {class: "grid", x1: l, x2: w - r, y1: r1(y(v)), y2: r1(y(v))}),
+              svgEl("text", {class: "axis-t", x: l + 2, y: r1(y(v)) - 3}, v.toLocaleString()));
+  }
+  kids.push(svgEl("line", {class: "grid", x1: l, x2: w - r, y1: y(0), y2: y(0)}));
+  const xstep = X_STEPS.find((s) => d.span_ms / s <= pw / 70) || X_STEPS.at(-1);
+  for (let ms = 0; ms <= d.span_ms; ms += xstep) {
+    const px = x(ms), anchor = px < l + 16 ? "start" : px > w - r - 16 ? "end" : "middle";
+    kids.push(svgEl("text", {class: "axis-t", x: r1(px), y: DENS_H - 4, "text-anchor": anchor}, fmtTime(ms)));
+  }
+
+  // Current From/To filter, shaded.
+  const from = parseTime(view.tFrom), to = parseTime(view.tTo);
+  if (from != null || to != null) {
+    const x0 = x(from ?? 0), x1 = x(to != null ? to + 1000 : d.span_ms);
+    if (x1 > x0) kids.push(svgEl("rect", {class: "range", x: r1(x0), y: t, width: r1(x1 - x0), height: ph}));
+  }
+
+  // Each value counts chats from its bucket's start forward, so plot it at that start.
+  const pts = d.nearby.map((v, i) => `${r1(x(i * d.bucket_ms))},${r1(y(v))}`);
+  const first = pts[0].split(",")[0], last = pts.at(-1).split(",")[0];
+  kids.push(svgEl("path", {class: "area", d: `M${first},${y(0)}L${pts.join("L")}L${last},${y(0)}Z`}),
+            svgEl("path", {class: "line", d: "M" + pts.join("L")}));
+
+  const brush = svgEl("rect", {class: "brush", y: t, height: ph, visibility: "hidden"});
+  const guide = svgEl("line", {class: "guide", y1: t, y2: t + ph, visibility: "hidden"});
+  kids.push(brush, guide);
+  densEls = {brush, guide};
+
+  d.peaks.forEach((p, i) => {
+    const cx = r1(x(p.offset_ms)), cy = r1(y(p.count));
+    kids.push(svgEl("circle", {class: "peak", cx, cy, r: 4}),
+              svgEl("circle", {class: "peak-hit", cx, cy, r: 12, "data-peak": i}));
+  });
+  svg.replaceChildren(...kids);
+
+  $("density-cap").textContent = d.total
+    ? `Chats in the next ${fmtSpan(d.window_ms)} from each moment · click to jump the table there · drag or click a peak to filter`
+    : "No chats match these filters.";
+}
+
+function densityMs(e) {
+  const rect = $("density-svg").getBoundingClientRect();
+  const frac = (e.clientX - rect.left - DENS_PAD.l) / (rect.width - DENS_PAD.l - DENS_PAD.r);
+  return Math.min(Math.max(frac, 0), 1) * density.span_ms;
+}
+
+function showDensityHover(ms, peakIdx) {
+  const d = density, tip = $("density-tip");
+  let at, count;
+  if (peakIdx != null) {
+    ({offset_ms: at, count} = d.peaks[peakIdx]);
+  } else {
+    const i = Math.min(Math.floor(ms / d.bucket_ms), d.nearby.length - 1);
+    at = i * d.bucket_ms;
+    count = d.nearby[i];
+  }
+  const px = densScale.x(at);
+  densEls.guide.setAttribute("x1", px);
+  densEls.guide.setAttribute("x2", px);
+  densEls.guide.setAttribute("visibility", "visible");
+  tip.replaceChildren(el("b", null, count.toLocaleString()),
+                      ` chats in next ${fmtSpan(d.window_ms)} · ${fmtTime(at)}${peakIdx != null ? " · click to zoom" : ""}`);
+  tip.classList.remove("hidden");
+  const left = densSvg.offsetLeft + px - tip.offsetWidth / 2;  // svg coords -> .density coords
+  tip.style.left = Math.min(Math.max(left, 4), $("density").clientWidth - tip.offsetWidth - 4) + "px";
+}
+
+function hideDensityHover() {
+  if (densEls) densEls.guide.setAttribute("visibility", "hidden");
+  $("density-tip").classList.add("hidden");
+}
+
+// Clear the time filter and page/scroll the table to the first message at `ms`.
+function jumpTo(ms) {
+  for (const id of ["t-from", "t-to"]) {
+    $(id).value = "";
+    $(id).classList.remove("bad");
+  }
+  clearTimeout(tTimer);
+  view.tFrom = view.tTo = "";
+  if (view.sort !== "time") Object.assign(view, {sort: "time", order: "asc"});
+  view.offset = 0;
+  pendingJump = Math.round(ms);
+  loadResults();
+  renderDensity();
+}
+
+function setTimeRange(fromMs, toMs) {
+  $("t-from").value = fmtTime(fromMs);
+  $("t-to").value = fmtTime(toMs);
+  clearTimeout(tTimer);
+  readTimeRange();
+}
+
+const densSvg = $("density-svg");
+densSvg.addEventListener("pointerdown", (e) => {
+  if (!density || e.button !== 0) return;
+  drag = {clientX: e.clientX, ms: densityMs(e), moved: false, peak: e.target.dataset.peak};
+  densSvg.setPointerCapture(e.pointerId);
+});
+densSvg.addEventListener("pointermove", (e) => {
+  if (!density || !densEls) return;
+  const ms = densityMs(e);
+  if (drag) {
+    if (Math.abs(e.clientX - drag.clientX) > 4) drag.moved = true;
+    if (drag.moved) {
+      const x0 = densScale.x(Math.min(drag.ms, ms)), x1 = densScale.x(Math.max(drag.ms, ms));
+      densEls.brush.setAttribute("x", x0);
+      densEls.brush.setAttribute("width", x1 - x0);
+      densEls.brush.setAttribute("visibility", "visible");
+    }
+  }
+  showDensityHover(ms, drag ? null : e.target.dataset.peak);
+});
+densSvg.addEventListener("pointerup", (e) => {
+  if (!drag) return;
+  const g = drag, ms = densityMs(e);
+  drag = null;
+  densEls.brush.setAttribute("visibility", "hidden");
+  if (g.moved) {
+    setTimeRange(Math.min(g.ms, ms), Math.max(g.ms, ms));
+  } else if (g.peak != null) {
+    const p = density.peaks[g.peak];
+    setTimeRange(p.offset_ms, p.offset_ms + density.window_ms);
+  } else {
+    jumpTo(g.ms);
+  }
+});
+densSvg.addEventListener("pointercancel", () => {
+  drag = null;
+  if (densEls) densEls.brush.setAttribute("visibility", "hidden");
+});
+densSvg.addEventListener("pointerleave", () => { if (!drag) hideDensityHover(); });
+window.addEventListener("resize", () => {
+  clearTimeout(densResize);
+  densResize = setTimeout(renderDensity, 150);
+});
 
 // ---------------------------------------------------------------- message popup
 function link(href, text) {
