@@ -15,7 +15,8 @@ from pathlib import Path
 
 from flask import Flask, abort, jsonify, render_template, request, send_file
 
-from scraper import CHAT_TYPES, FORMATS, ChatScraper, ChatStats, ScraperError, extract_video_id, save
+from scraper import (CHAT_TYPES, FORMATS, ChatScraper, ChatStats, ScraperError, extract_video_id,
+                     is_emoji_only, save)
 
 DOWNLOAD_DIR = Path(__file__).resolve().parent / "downloads"
 DOWNLOAD_DIR.mkdir(exist_ok=True)
@@ -40,14 +41,19 @@ def _csv_arg(args, name: str) -> set[str]:
 
 
 def filter_messages(messages: list[dict], args) -> list[dict]:
-    """Filter and sort messages by the table's query params (types, roles, q, currency, sort, order)."""
+    """Filter and sort messages by the table's query params
+    (types, roles, q, currency, hide_emoji, sort, order)."""
     types = _csv_arg(args, "types")
     roles = _csv_arg(args, "roles") & set(ROLES)
     query = (args.get("q") or "").strip().casefold()
     currency = args.get("currency") or ""
+    hide_emoji = args.get("hide_emoji") == "1"
 
     def keep(m):
         if types and m["type"] not in types:
+            return False
+        # Only plain chat lines; paid messages and events stay even if emoji-only.
+        if hide_emoji and m["type"] == "text_message" and is_emoji_only(m):
             return False
         if roles and not any(m[f"is_{r}"] for r in roles):
             return False

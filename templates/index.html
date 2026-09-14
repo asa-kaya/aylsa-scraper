@@ -190,6 +190,7 @@
     <div class="filters">
       <div class="chips" id="type-chips"></div>
       <button type="button" class="chip preset" id="paid-only">$ Paid only</button>
+      <button type="button" class="chip preset" id="hide-emoji" title="Hide text messages made only of emoji / emotes">Hide emoji-only</button>
       <button type="button" class="chip preset" id="reset-filters">Reset</button>
     </div>
     <div class="filters">
@@ -427,7 +428,8 @@ const ROLES = [["owner", "Owner"], ["moderator", "Moderator"], ["member", "Membe
 const COLUMNS = [["time", "Time", true], ["type", "Type", true], ["author", "Author", true],
                  ["message", "Message", false], ["amount", "Amount", true]];
 const PAGE = 100;
-const view = {types: new Set(), roles: new Set(), q: "", currency: "", sort: "time", order: "asc", offset: 0};
+const view = {types: new Set(), roles: new Set(), q: "", currency: "", hideEmoji: false,
+              sort: "time", order: "asc", offset: 0};
 let resultsJob = null, resultsVideo = null, qTimer = null, loadSeq = 0;
 let currentRows = [], lastTotal = 0, modalIndex = -1;
 
@@ -442,6 +444,7 @@ function filterParams() {
   if (view.roles.size) p.set("roles", [...view.roles].join(","));
   if (view.q) p.set("q", view.q);
   if (view.currency) p.set("currency", view.currency);
+  if (view.hideEmoji) p.set("hide_emoji", "1");
   p.set("sort", view.sort);
   p.set("order", view.order);
   return p;
@@ -457,7 +460,8 @@ function openResults(id, video) {
 }
 
 function resetView() {
-  Object.assign(view, {types: new Set(), roles: new Set(), q: "", currency: "", sort: "time", order: "asc", offset: 0});
+  Object.assign(view, {types: new Set(), roles: new Set(), q: "", currency: "", hideEmoji: false,
+                       sort: "time", order: "asc", offset: 0});
   $("q").value = "";
   syncControls();
 }
@@ -465,6 +469,7 @@ function resetView() {
 function syncControls() {
   document.querySelectorAll("#type-chips .chip").forEach((c) => c.classList.toggle("on", view.types.has(c.dataset.type)));
   document.querySelectorAll("#roles input").forEach((i) => { i.checked = view.roles.has(i.value); });
+  $("hide-emoji").classList.toggle("on", view.hideEmoji);
 }
 
 function applyFilters() {
@@ -590,6 +595,7 @@ $("paid-only").addEventListener("click", () => {
   Object.assign(view, {types: new Set(["superchat", "supersticker"]), sort: "amount", order: "desc"});
   applyFilters();
 });
+$("hide-emoji").addEventListener("click", () => { view.hideEmoji = !view.hideEmoji; applyFilters(); });
 $("reset-filters").addEventListener("click", () => { resetView(); loadResults(); });
 $("q").addEventListener("input", () => {
   clearTimeout(qTimer);

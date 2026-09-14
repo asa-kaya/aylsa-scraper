@@ -17,6 +17,7 @@ import json
 import re
 import threading
 import time
+import unicodedata
 from datetime import datetime, timezone
 from typing import Iterator
 
@@ -40,6 +41,8 @@ PLAYER_RESPONSE_RE = re.compile(r'(?:var\s+ytInitialPlayerResponse|window\["ytIn
 CONTEXT_RE = re.compile(r'"INNERTUBE_CONTEXT"\s*:\s*')
 API_KEY_RE = re.compile(r'"INNERTUBE_API_KEY"\s*:\s*"([^"]+)"')
 AMOUNT_RE = re.compile(r"^(?P<pre>\D*?)\s*(?P<num>\d[\d,]*(?:\.\d+)?)\s*(?P<post>\D*)$")
+# Non-symbol characters that appear inside emoji: ZWJ, variation selectors, keycap.
+EMOJI_EXTRAS = {chr(0x200D), chr(0xFE0E), chr(0xFE0F), chr(0x20E3)}
 
 RENDERER_TYPES = {
     "liveChatTextMessageRenderer": "text_message",
@@ -203,6 +206,28 @@ def parse_amount(text: str):
     except ValueError:
         value = None
     return currency, value
+
+
+def _is_emoji_char(ch: str) -> bool:
+    cp = ord(ch)
+    return (unicodedata.category(ch) == "So" or ch in EMOJI_EXTRAS
+            or 0x1F3FB <= cp <= 0x1F3FF      # skin tones
+            or 0xE0020 <= cp <= 0xE007F)     # tag chars (subdivision flags)
+
+
+def is_emoji_only(msg: dict) -> bool:
+    """True if a message is made only of emoji / custom emotes (plus whitespace)."""
+    runs = (msg.get("display") or {}).get("runs") or ([{"text": msg["message"]}] if msg.get("message") else [])
+    found = False
+    for run in runs:
+        if "emoji" in run:
+            found = True
+            continue
+        text = "".join((run.get("text") or "").split())
+        if text and not all(_is_emoji_char(c) for c in text):
+            return False
+        found = found or bool(text)
+    return found
 
 
 def _badges(renderer: dict):
