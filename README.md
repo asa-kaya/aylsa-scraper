@@ -13,7 +13,7 @@ or YouTube login.
 - Live progress bar, counters and paid totals per currency while scraping
 - **Stop early** and still keep everything collected so far
 - **Results table** with type filters, a one-click **Paid only** view, a **Hide emoji-only** toggle,
-  search, role and currency filters, sortable columns and paging
+  search, role, currency and **stream time range** filters, sortable columns and paging
 - **Download exactly what you filtered** as JSON or CSV
 - Click any row to see the message **rendered like it looked in YouTube's chat**
 - Command-line mode for scripting
@@ -100,6 +100,9 @@ The server only listens on your own machine (`127.0.0.1`); it is not reachable f
    - **Hide emoji-only** hides text messages made only of emoji and channel emotes (e.g. `😂😂` or
      `:_emote:`). Super Chats, memberships and other events are never hidden.
    - Search by author or message text; filter by Owner / Moderator / Member / Verified; filter by currency.
+   - **From / To** limits results to a stretch of the stream, by stream time (the Time column). Use
+     `1:05:22`, `5:30` or plain seconds like `90`; leave either side empty for no limit. `To` includes
+     that whole second. Invalid entries turn red and are ignored.
    - Click the **Time, Type, Author or Amount** headers to sort (click again to reverse).
    - 100 rows per page, with Prev / Next.
    - **Download filtered JSON / CSV** exports only the rows matching your filters, in the current sort order.

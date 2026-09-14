@@ -40,18 +40,35 @@ def _csv_arg(args, name: str) -> set[str]:
     return {v for v in (args.get(name) or "").split(",") if v}
 
 
+def _parse_offset(value) -> int | None:
+    """'1:05:22' / '5:30' / '90' -> milliseconds; None if empty or invalid."""
+    parts = (value or "").strip().split(":")
+    if len(parts) > 3 or not all(p.isdigit() for p in parts):
+        return None
+    secs = 0
+    for p in parts:
+        secs = secs * 60 + int(p)
+    return secs * 1000
+
+
 def filter_messages(messages: list[dict], args) -> list[dict]:
     """Filter and sort messages by the table's query params
-    (types, roles, q, currency, hide_emoji, sort, order)."""
+    (types, roles, q, currency, hide_emoji, from, to, sort, order)."""
     types = _csv_arg(args, "types")
     roles = _csv_arg(args, "roles") & set(ROLES)
     query = (args.get("q") or "").strip().casefold()
     currency = args.get("currency") or ""
     hide_emoji = args.get("hide_emoji") == "1"
+    start, end = _parse_offset(args.get("from")), _parse_offset(args.get("to"))
 
     def keep(m):
         if types and m["type"] not in types:
             return False
+        # Stream-time range; "to" covers the whole second shown (1:00 keeps 1:00.999).
+        if start is not None or end is not None:
+            off = m["video_offset_ms"]
+            if off is None or (start is not None and off < start) or (end is not None and off >= end + 1000):
+                return False
         # Only plain chat lines; paid messages and events stay even if emoji-only.
         if hide_emoji and m["type"] == "text_message" and is_emoji_only(m):
             return False

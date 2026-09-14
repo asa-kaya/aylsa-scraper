@@ -86,9 +86,13 @@
           color: var(--muted); cursor: pointer; font-size: 12px; font-weight: 500; }
   .chip.on { border-color: var(--accent); color: var(--text); background: #3a1417; }
   .chip.preset { border-style: dashed; color: var(--text); }
-  .filters input[type=search], .filters select { padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line);
-                                                 background: var(--panel2); color: var(--text); font-size: 13px; }
+  .filters input[type=search], .filters select, .filters input.time-in {
+    padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--panel2); color: var(--text); font-size: 13px; }
   .filters input[type=search] { flex: 1; min-width: 200px; }
+  .filters input.time-in { width: 96px; }
+  .filters input.time-in.bad { border-color: #ff8080; }
+  .trange { color: var(--muted); white-space: nowrap; }
   .roles label { color: var(--muted); margin-right: 12px; cursor: pointer; font-size: 13px; white-space: nowrap; }
   .summary-line { color: var(--muted); margin: 4px 0 10px; }
   .summary-line b { color: var(--text); }
@@ -197,6 +201,10 @@
       <input type="search" id="q" placeholder="Search author or message…" autocomplete="off">
       <div class="roles" id="roles"></div>
       <select id="currency"><option value="">Any currency</option></select>
+      <div class="trange" title="Stream time, e.g. 1:05:22, 5:30 or 90">
+        <input type="text" id="t-from" class="time-in" placeholder="From 0:00" autocomplete="off"> –
+        <input type="text" id="t-to" class="time-in" placeholder="To" autocomplete="off">
+      </div>
     </div>
     <div class="summary-line" id="summary-line"></div>
     <div class="table-wrap" id="table-wrap">
@@ -428,9 +436,10 @@ const ROLES = [["owner", "Owner"], ["moderator", "Moderator"], ["member", "Membe
 const COLUMNS = [["time", "Time", true], ["type", "Type", true], ["author", "Author", true],
                  ["message", "Message", false], ["amount", "Amount", true]];
 const PAGE = 100;
-const view = {types: new Set(), roles: new Set(), q: "", currency: "", hideEmoji: false,
+const TIME_RE = /^\d+(:\d+){0,2}$/;
+const view = {types: new Set(), roles: new Set(), q: "", currency: "", hideEmoji: false, tFrom: "", tTo: "",
               sort: "time", order: "asc", offset: 0};
-let resultsJob = null, resultsVideo = null, qTimer = null, loadSeq = 0;
+let resultsJob = null, resultsVideo = null, qTimer = null, tTimer = null, loadSeq = 0;
 let currentRows = [], lastTotal = 0, modalIndex = -1;
 
 function typeLabel(t) {
@@ -445,6 +454,8 @@ function filterParams() {
   if (view.q) p.set("q", view.q);
   if (view.currency) p.set("currency", view.currency);
   if (view.hideEmoji) p.set("hide_emoji", "1");
+  if (TIME_RE.test(view.tFrom)) p.set("from", view.tFrom);
+  if (TIME_RE.test(view.tTo)) p.set("to", view.tTo);
   p.set("sort", view.sort);
   p.set("order", view.order);
   return p;
@@ -453,6 +464,7 @@ function filterParams() {
 function openResults(id, video) {
   resultsJob = id;
   resultsVideo = video;
+  $("t-to").placeholder = video && video.duration_seconds ? "To " + fmtTime(video.duration_seconds * 1000) : "To";
   resetView();
   $("feed-card").classList.add("hidden");
   $("results").classList.remove("hidden");
@@ -460,9 +472,13 @@ function openResults(id, video) {
 }
 
 function resetView() {
-  Object.assign(view, {types: new Set(), roles: new Set(), q: "", currency: "", hideEmoji: false,
+  Object.assign(view, {types: new Set(), roles: new Set(), q: "", currency: "", hideEmoji: false, tFrom: "", tTo: "",
                        sort: "time", order: "asc", offset: 0});
   $("q").value = "";
+  for (const id of ["t-from", "t-to"]) {
+    $(id).value = "";
+    $(id).classList.remove("bad");
+  }
   syncControls();
 }
 
@@ -602,6 +618,19 @@ $("q").addEventListener("input", () => {
   qTimer = setTimeout(() => { view.q = $("q").value.trim(); applyFilters(); }, 300);
 });
 $("currency").addEventListener("change", () => { view.currency = $("currency").value; applyFilters(); });
+
+function readTimeRange() {
+  for (const [id, key] of [["t-from", "tFrom"], ["t-to", "tTo"]]) {
+    const v = $(id).value.trim();
+    $(id).classList.toggle("bad", v !== "" && !TIME_RE.test(v));
+    view[key] = v;
+  }
+  applyFilters();
+}
+["t-from", "t-to"].forEach((id) => $(id).addEventListener("input", () => {
+  clearTimeout(tTimer);
+  tTimer = setTimeout(readTimeRange, 300);
+}));
 $("prev").addEventListener("click", () => { view.offset = Math.max(0, view.offset - PAGE); loadResults(); });
 $("next").addEventListener("click", () => { view.offset += PAGE; loadResults(); });
 
