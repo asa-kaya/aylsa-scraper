@@ -145,6 +145,17 @@ class Job:
             save(path, fmt, messages, self.video, stats, partial=self.stop_event.is_set())
         return path
 
+    @property
+    def resumable(self) -> bool:
+        # Stopped by the user, or failed mid-scrape (e.g. network) after collecting something.
+        return self.status == "cancelled" or (self.status == "error" and bool(self.messages))
+
+    @property
+    def resume_offset(self) -> int:
+        """Stream time (ms) of the last collected message; a resume continues from here."""
+        offsets = (m["video_offset_ms"] for m in reversed(self.messages) if m["video_offset_ms"] is not None)
+        return max(next(offsets, 0), 0)
+
     def summary(self) -> dict:
         return {
             "id": self.id,
@@ -154,6 +165,8 @@ class Job:
             "title": (self.video or {}).get("title", ""),
             "status": self.status,
             "total": self.stats.total,
+            "resumable": self.resumable,
+            "offset_ms": self.resume_offset if self.resumable else None,
         }
 
     def to_dict(self) -> dict:
@@ -177,13 +190,24 @@ class Job:
         }
 
 
-def run_job(job: Job):
+def run_job(job: Job, resume_from: int | None = None):
+    """Scrape into job. With resume_from (stream ms), seek there and append to the messages already collected."""
     try:
         job.scraper = ChatScraper(job.url, chat_type=job.chat_type, stop_event=job.stop_event)
+        if resume_from is not None:
+            job.scraper.offset_ms = resume_from  # sent as playerOffsetMs, so the first request seeks there
         job.status = "fetching"
         job.video = job.scraper.fetch_video_info()
         job.status = "running"
-        for msg in job.scraper.iter_messages():
+        seen = {m["id"] for m in job.messages} if resume_from is not None else None
+        checked = resume_from is None
+        for msg in job.scraper.iter_messages(seen_ids=seen):
+            if not checked:
+                checked = True
+                off = msg["video_offset_ms"]
+                if off is not None and off < resume_from - 60_000:
+                    print(f"[resume] {job.video_id}: asked for {resume_from} ms, replay restarted at {off} ms "
+                          "(seek ignored; already-collected messages are skipped)")
             job.messages.append(msg)
             job.stats.add(msg)
             job.recent.append(msg)
@@ -247,6 +271,22 @@ def create_job():
         jobs[job.id] = job
     threading.Thread(target=run_job, args=(job,), daemon=True).start()
     return jsonify(id=job.id), 201
+
+
+@app.post("/api/jobs/<job_id>/resume")
+def resume_job(job_id):
+    with jobs_lock:
+        job = get_job(job_id)
+        if not job.resumable:
+            return jsonify(error="Only a stopped scrape can be resumed."), 409
+        elapsed = (job.finished or time.time()) - job.started
+        job.stop_event = threading.Event()
+        job.status, job.error, job.finished = "queued", "", None
+        job.started = time.time() - elapsed  # elapsed keeps counting from where it stopped
+        jobs[job.id] = jobs.pop(job.id)  # mark as most recently used
+        resume_from = job.resume_offset
+    threading.Thread(target=run_job, args=(job, resume_from), daemon=True).start()
+    return jsonify(id=job.id)
 
 
 @app.get("/api/jobs")

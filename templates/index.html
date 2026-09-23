@@ -191,6 +191,7 @@
         </div>
       </div>
       <div class="grow"></div>
+      <button type="button" id="resume" class="hidden">Resume</button>
       <button type="submit" id="start">Start scraping</button>
     </div>
     <div id="form-error" class="err hidden"></div>
@@ -300,6 +301,9 @@ function el(tag, cls, text) {
 $("form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   $("form-error").classList.add("hidden");
+  const stopped = resumableMatch();
+  if (stopped && !confirm(`Start over? The ${stopped.total.toLocaleString()} messages collected so far will be ` +
+                          "discarded, and the saved partial file overwritten when the new scrape finishes.")) return;
   const body = {
     url: $("url").value.trim(),
     format: document.querySelector("input[name=format]:checked").value,
@@ -336,8 +340,55 @@ async function refreshJobs() {
   // The job on screen was evicted or removed (maybe from another tab).
   if (jobId && !jobList.some((j) => j.id === jobId)) clearCurrentJob();
   renderChips();
+  updateResumeButton();
   if (jobList.some((j) => ACTIVE.includes(j.status))) chipsTimer = setTimeout(refreshJobs, 2000);
 }
+
+// Same rules as scraper.extract_video_id.
+const VIDEO_ID_RE = /(?:v=|\/live\/|youtu\.be\/|\/shorts\/|\/embed\/|\/v\/)([A-Za-z0-9_-]{11})/;
+function videoIdOf(url) {
+  url = url.trim();
+  if (/^[A-Za-z0-9_-]{11}$/.test(url)) return url;
+  const m = url.match(VIDEO_ID_RE);
+  return m ? m[1] : null;
+}
+
+// Stopped scrape in this session for the stream + chat type currently in the form.
+function resumableMatch() {
+  const vid = videoIdOf($("url").value);
+  const ct = document.querySelector("input[name=chat_type]:checked").value;
+  return jobList.find((j) => j.resumable && j.video_id === vid && j.chat_type === ct) || null;
+}
+
+function updateResumeButton() {
+  const j = resumableMatch();
+  $("resume").classList.toggle("hidden", !j);
+  $("start").classList.toggle("ghost", !!j);
+  $("start").textContent = j ? "Start over" : "Start scraping";
+  if (j) $("resume").textContent = `Resume from ${fmtTime(j.offset_ms)}`;
+}
+
+$("url").addEventListener("input", updateResumeButton);
+document.querySelectorAll("input[name=chat_type]").forEach((r) => r.addEventListener("change", updateResumeButton));
+
+$("resume").addEventListener("click", async () => {
+  const j = resumableMatch();
+  if (!j) return;
+  $("form-error").classList.add("hidden");
+  $("resume").disabled = $("start").disabled = true;
+  try {
+    const res = await fetch(`/api/jobs/${j.id}/resume`, {method: "POST"});
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Failed to resume");
+    startJob(data.id);
+  } catch (e) {
+    $("form-error").textContent = e.message;
+    $("form-error").classList.remove("hidden");
+    $("start").disabled = false;
+  }
+  $("resume").disabled = false;
+  refreshJobs();
+});
 
 function jobName(j) {
   return j.title || j.video_id;
@@ -366,6 +417,7 @@ function loadJob(j) {
   $("form-error").classList.add("hidden");
   startJob(j.id);
   renderChips();
+  updateResumeButton();
 }
 
 async function removeJob(j) {

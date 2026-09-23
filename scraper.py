@@ -498,7 +498,9 @@ class ChatScraper:
 
     # -- chat replay ----------------------------------------------------------
 
-    def iter_messages(self) -> Iterator[dict]:
+    def iter_messages(self, seen_ids: set[str] | None = None) -> Iterator[dict]:
+        """Yield chat messages from self.offset_ms on (set it before calling to resume mid-stream),
+        skipping ids in seen_ids."""
         if self.info is None:
             self.fetch_video_info()
 
@@ -521,7 +523,7 @@ class ChatScraper:
             token, first = view_token, None
 
         used_tokens = set()
-        seen_ids = set()
+        seen_ids = set(seen_ids or ())
 
         while token and token not in used_tokens and not self.stop_event.is_set():
             used_tokens.add(token)
