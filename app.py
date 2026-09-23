@@ -29,9 +29,12 @@ MAX_PAGE = 500
 DENSITY_BINS = 300
 DENSITY_PEAKS = 5
 WINDOW_MIN_MS = 30_000  # hot-spot graph counts chats in (at least) the next 30s
+MAX_JOBS = 3  # scrapes kept in memory this session; oldest finished one is evicted
+ACTIVE = ("queued", "fetching", "running", "saving")
 
 app = Flask(__name__)
-jobs: dict[str, "Job"] = {}
+jobs: dict[str, "Job"] = {}  # insertion order = age, oldest first
+jobs_lock = threading.Lock()
 
 
 def stats_for(messages: list[dict]) -> dict:
@@ -107,6 +110,7 @@ class Job:
     def __init__(self, url: str, fmt: str, chat_type: str):
         self.id = uuid.uuid4().hex
         self.url = url
+        self.video_id = extract_video_id(url)
         self.fmt = fmt
         self.chat_type = chat_type
         self.status = "queued"  # queued -> fetching -> running -> saving -> done | cancelled | error
@@ -140,6 +144,17 @@ class Job:
         with self.save_lock:
             save(path, fmt, messages, self.video, stats, partial=self.stop_event.is_set())
         return path
+
+    def summary(self) -> dict:
+        return {
+            "id": self.id,
+            "url": self.url,
+            "video_id": self.video_id,
+            "chat_type": self.chat_type,
+            "title": (self.video or {}).get("title", ""),
+            "status": self.status,
+            "total": self.stats.total,
+        }
 
     def to_dict(self) -> dict:
         offset = self.scraper.offset_ms if self.scraper else 0
@@ -210,14 +225,44 @@ def create_job():
     if fmt not in FORMATS or chat_type not in CHAT_TYPES:
         return jsonify(error="Invalid format or chat type."), 400
     try:
-        extract_video_id(url)
+        video_id = extract_video_id(url)
     except ScraperError as exc:
         return jsonify(error=str(exc)), 400
 
-    job = Job(url, fmt, chat_type)
-    jobs[job.id] = job
+    with jobs_lock:
+        same = [j for j in jobs.values() if j.video_id == video_id and j.chat_type == chat_type]
+        for j in same:
+            # Reuse a finished or still-running scrape of the same stream; failed/stopped ones get replaced.
+            if j.status not in ("error", "cancelled"):
+                jobs[j.id] = jobs.pop(j.id)  # mark as most recently used
+                return jsonify(id=j.id, reused=True), 200
+        for j in same:
+            del jobs[j.id]
+        if len(jobs) >= MAX_JOBS:
+            oldest = next((j for j in jobs.values() if j.status not in ACTIVE), None)
+            if oldest is None:
+                return jsonify(error=f"{MAX_JOBS} scrapes already running. Close one first."), 409
+            del jobs[oldest.id]
+        job = Job(url, fmt, chat_type)
+        jobs[job.id] = job
     threading.Thread(target=run_job, args=(job,), daemon=True).start()
     return jsonify(id=job.id), 201
+
+
+@app.get("/api/jobs")
+def list_jobs():
+    with jobs_lock:
+        return jsonify([j.summary() for j in reversed(jobs.values())])
+
+
+@app.delete("/api/jobs/<job_id>")
+def delete_job(job_id):
+    with jobs_lock:
+        job = jobs.pop(job_id, None)
+    if job is None:
+        abort(404)
+    job.stop_event.set()  # a running scrape stops and saves its partial file as on cancel
+    return jsonify(ok=True)
 
 
 @app.get("/api/jobs/<job_id>")
