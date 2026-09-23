@@ -147,9 +147,11 @@
   .pager { display: flex; gap: 12px; align-items: center; justify-content: flex-end; margin-top: 10px; color: var(--muted); }
   .pager button { padding: 6px 12px; }
 
-  #tbody tr.clickable { cursor: pointer; }
-  #tbody tr.clickable:hover td { background: rgba(255,255,255,.05); }
+  #tbody td.copyable, #tbody td.pop { cursor: pointer; }
+  #tbody td.copyable:hover, #tbody td.pop:hover { background: rgba(255,255,255,.05); }
+  #tbody td.pop:hover .pill { outline: 1px solid var(--muted); }
   #tbody td { transition: background .8s; }
+  #tbody td.copyable.copied { background: rgba(62,207,142,.18); transition: none; }
   #tbody tr.focus td { background: rgba(255,59,59,.2); transition: none; }
   .modal { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center;
            padding: 20px; background: rgba(0,0,0,.65); }
@@ -687,11 +689,38 @@ function renderHead() {
   }));
 }
 
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (e) {  // clipboard API unavailable (e.g. page not served from localhost)
+    const ta = el("textarea");
+    ta.value = text;
+    document.body.append(ta);
+    ta.select();
+    document.execCommand("copy");
+    ta.remove();
+  }
+}
+
+// Clicking the cell copies `text`, unless the click ended a drag-selection of text.
+function copyCell(td, text, what) {
+  if (!text) return td;
+  td.classList.add("copyable");
+  td.title = `Click to copy ${what}`;
+  td.addEventListener("click", async () => {
+    if (String(getSelection())) return;
+    await copyText(text);
+    td.classList.add("copied");
+    setTimeout(() => td.classList.remove("copied"), 700);
+  });
+  return td;
+}
+
 function renderRow(m, i) {
-  const tr = el("tr", "clickable");
-  tr.addEventListener("click", () => openMessage(i));
-  tr.append(el("td", "time", m.time_in_video));
-  const type = el("td");
+  const tr = el("tr");
+  const type = el("td", "pop");
+  type.title = "Show message";
+  type.addEventListener("click", () => openMessage(i));
   type.append(el("span", `pill ${m.type}`, typeLabel(m.type)));
   const author = el("td", "author");
   if (m.author_photo) {
@@ -702,7 +731,9 @@ function renderRow(m, i) {
   author.append(el("span", roleClass(m), m.author_name));
   const amount = el("td", "amount", m.amount_text);
   if (m.amount_text && m.color) amount.style.background = m.color;
-  tr.append(type, author, el("td", "msgcell", messageText(m)), amount);
+  const text = messageText(m);
+  tr.append(copyCell(el("td", "time", m.time_in_video), m.time_in_video, "time"), type,
+            copyCell(author, m.author_name, "author"), copyCell(el("td", "msgcell", text), text, "message"), amount);
   return tr;
 }
 
