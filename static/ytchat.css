@@ -43,7 +43,6 @@
 
 /* Normal chat line (dark gray) */
 .yt-text { display: flex; align-items: flex-start; gap: 12px; padding: 8px 16px; background: #272727; border-radius: 8px; }
-.yt-time { color: rgba(255,255,255,.5); font-size: 11px; line-height: 24px; flex: none; font-variant-numeric: tabular-nums; }
 .yt-text .yt-avatar { margin-top: 0; }
 .yt-line { flex: 1; min-width: 0; font-size: 13px; line-height: 24px; overflow-wrap: anywhere; }
 .yt-text .yt-author-wrap { margin-right: 8px; }

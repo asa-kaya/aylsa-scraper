@@ -158,7 +158,6 @@
     if (m.type === "gift_redemption") cls += " yt-redeem";
     if (m.type === "system") cls += " yt-system";
     const row = el("div", cls);
-    if (m.time_in_video) row.append(el("span", "yt-time", m.time_in_video));
     if (m.author_name) row.append(avatar(m, true));
     const line = el("div", "yt-line");
     if (m.author_name) line.append(author(m, null, true));

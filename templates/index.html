@@ -162,6 +162,9 @@
                  font-size: 22px; padding: 4px 10px; }
   .modal-close:hover { color: var(--text); }
   #yt-card { display: flex; justify-content: center; }
+  .card-actions { display: flex; justify-content: center; margin-top: 12px; }
+  .card-actions button { font-size: 12px; padding: 6px 12px; }
+  .snap-stage { position: fixed; left: -10000px; top: 0; pointer-events: none; }
   .modal-meta { display: grid; gap: 4px; margin-top: 18px; color: var(--muted); font-size: 13px; }
   .modal-meta b { color: var(--text); font-weight: 500; }
   .modal-meta a { color: #8ab4f8; }
@@ -270,12 +273,14 @@
   <div class="modal-box" role="dialog" aria-modal="true" aria-label="Chat message">
     <button type="button" class="modal-close" id="modal-close" aria-label="Close">×</button>
     <div id="yt-card"></div>
+    <div class="card-actions"><button type="button" class="ghost" id="card-png">Download as PNG</button></div>
     <div class="modal-meta" id="modal-meta"></div>
     <div class="modal-nav"><span>← → browse · Esc close</span><span id="modal-pos"></span></div>
   </div>
 </div>
 
 <script src="{{ url_for('static', filename='ytchat.js') }}"></script>
+<script src="{{ url_for('static', filename='html-to-image.min.js') }}"></script>
 <script>
 const $ = (id) => document.getElementById(id);
 const STAT_LABELS = [
@@ -1086,6 +1091,96 @@ function closeMessage() {
   modalIndex = -1;
 }
 
+// Inline an <img> through the same-origin proxy so the exported canvas isn't tainted.
+async function inlineImage(im) {
+  try {
+    const res = await fetch("/api/img?u=" + encodeURIComponent(im.src));
+    if (!res.ok) throw new Error(res.status);
+    im.src = await blobToDataURL(await res.blob());
+    await im.decode();
+  } catch {
+    im.style.visibility = "hidden";
+  }
+}
+
+function cardFilename(m) {
+  const base = [m.author_name || "message", (m.time_in_video || "").replace(/:/g, "-")]
+    .filter(Boolean).join("_");
+  return (base.replace(/[^\w.-]+/g, "_").replace(/^_+|_+$/g, "") || "message") + ".png";
+}
+
+function blobToDataURL(blob) {
+  return new Promise((ok, fail) => {
+    const fr = new FileReader();
+    fr.onload = () => ok(fr.result);
+    fr.onerror = fail;
+    fr.readAsDataURL(blob);
+  });
+}
+
+// The exported image is an isolated SVG that can't load web fonts, so Roboto must be
+// inlined; otherwise text falls back to a wider font and wraps differently.
+let fontCSSPromise = null;
+function embeddedFontCSS() {
+  fontCSSPromise ||= (async () => {
+    const link = document.querySelector('link[rel=stylesheet][href*="fonts.googleapis.com"]');
+    if (!link) return "";
+    let css = await (await fetch(link.href)).text();
+    const urls = [...new Set(css.match(/url\([^)]+\)/g) || [])];
+    await Promise.all(urls.map(async (u) => {
+      const res = await fetch(u.slice(4, -1).replace(/["']/g, ""));
+      if (!res.ok) throw new Error(`font ${res.status}`);
+      css = css.split(u).join(`url(${await blobToDataURL(await res.blob())})`);
+    }));
+    return css;
+  })().catch((err) => {
+    console.warn("Font embed failed", err);
+    fontCSSPromise = null;
+    return "";
+  });
+  return fontCSSPromise;
+}
+
+async function cardToPng(card) {
+  const stage = el("div", "snap-stage");
+  const clone = card.cloneNode(true);
+  stage.append(clone);
+  document.body.append(stage);
+  try {
+    const [fontEmbedCSS] = await Promise.all([
+      embeddedFontCSS(),
+      ...[...clone.querySelectorAll("img")].filter((im) => !im.src.startsWith("data:")).map(inlineImage),
+    ]);
+    return await htmlToImage.toPng(clone, {pixelRatio: 2, fontEmbedCSS});
+  } finally {
+    stage.remove();
+  }
+}
+
+async function downloadCard() {
+  const m = currentRows[modalIndex];
+  const card = $("yt-card").firstElementChild;
+  if (!m || !card) return;
+  const btn = $("card-png");
+  btn.disabled = true;
+  btn.textContent = "Saving…";
+  try {
+    const url = await cardToPng(card);
+    const a = el("a");
+    a.href = url;
+    a.download = cardFilename(m);
+    a.click();
+    btn.textContent = "Saved";
+  } catch (err) {
+    console.error(err);
+    btn.textContent = "Failed — retry";
+  } finally {
+    btn.disabled = false;
+    setTimeout(() => { btn.textContent = "Download as PNG"; }, 1500);
+  }
+}
+
+$("card-png").addEventListener("click", downloadCard);
 $("modal-close").addEventListener("click", closeMessage);
 $("modal").addEventListener("click", (e) => { if (e.target === $("modal")) closeMessage(); });
 document.addEventListener("keydown", (e) => {

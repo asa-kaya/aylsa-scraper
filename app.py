@@ -14,8 +14,10 @@ import uuid
 from collections import deque
 from itertools import accumulate
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
-from flask import Flask, abort, jsonify, render_template, request, send_file
+import requests
+from flask import Flask, Response, abort, jsonify, render_template, request, send_file
 
 from scraper import (CHAT_TYPES, FORMATS, ChatScraper, ChatStats, ScraperError, extract_video_id,
                      is_emoji_only, save)
@@ -31,6 +33,9 @@ DENSITY_PEAKS = 5
 WINDOW_MIN_MS = 30_000  # hot-spot graph counts chats in (at least) the next 30s
 MAX_JOBS = 3  # scrapes kept in memory this session; oldest finished one is evicted
 ACTIVE = ("queued", "fetching", "running", "saving")
+# Image proxy (lets the page export chat cards to PNG without tainting the canvas).
+IMG_HOSTS = ("ggpht.com", "googleusercontent.com", "ytimg.com", "gstatic.com", "youtube.com")
+IMG_MAX_BYTES = 5 * 1024 * 1024
 
 app = Flask(__name__)
 jobs: dict[str, "Job"] = {}  # insertion order = age, oldest first
@@ -238,6 +243,32 @@ def get_job(job_id: str) -> Job:
 @app.get("/")
 def index():
     return render_template("index.html")
+
+
+@app.get("/api/img")
+def proxy_image():
+    """Fetch a YouTube CDN image same-origin, so the browser can draw it into a canvas."""
+    def allowed(u: str) -> bool:
+        host = (urlsplit(u).hostname or "").lower()
+        return any(host == h or host.endswith("." + h) for h in IMG_HOSTS)
+
+    parts = urlsplit(request.args.get("u", ""))
+    if parts.scheme not in ("http", "https") or not allowed(parts.geturl()):
+        return jsonify(error="Image host not allowed."), 400
+    url = urlunsplit(("https", parts.netloc, parts.path, parts.query, ""))
+    try:
+        with requests.get(url, timeout=10, stream=True) as r:
+            ctype = r.headers.get("Content-Type", "")
+            if r.status_code != 200 or not ctype.startswith("image/") or not allowed(r.url):
+                return jsonify(error="Image fetch failed."), 502
+            data = b""
+            for chunk in r.iter_content(64 * 1024):
+                data += chunk
+                if len(data) > IMG_MAX_BYTES:
+                    return jsonify(error="Image too large."), 502
+    except requests.RequestException:
+        return jsonify(error="Image fetch failed."), 502
+    return Response(data, content_type=ctype, headers={"Cache-Control": "max-age=86400"})
 
 
 @app.post("/api/jobs")
