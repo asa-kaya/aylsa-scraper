@@ -218,3 +218,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Frontend (React) dependencies; the built app in static/app/ is committed
+frontend/node_modules/

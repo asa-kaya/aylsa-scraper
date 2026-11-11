@@ -17,13 +17,15 @@ from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 import requests
-from flask import Flask, Response, abort, jsonify, render_template, request, send_file
+from flask import Flask, Response, abort, jsonify, request, send_file
 
 from scraper import (CHAT_TYPES, FORMATS, ChatScraper, ChatStats, ScraperError, extract_video_id,
                      is_emoji_only, save)
 
 DOWNLOAD_DIR = Path(__file__).resolve().parent / "downloads"
 DOWNLOAD_DIR.mkdir(exist_ok=True)
+# React frontend, built from frontend/ by `npm run build`.
+FRONTEND_INDEX = Path(__file__).resolve().parent / "static" / "app" / "index.html"
 
 ROLES = ("owner", "moderator", "member", "verified")
 SEARCH_FIELDS = ("author_name", "message", "header_text", "sticker_label")
@@ -242,7 +244,10 @@ def get_job(job_id: str) -> Job:
 
 @app.get("/")
 def index():
-    return render_template("index.html")
+    if not FRONTEND_INDEX.is_file():
+        return Response("Frontend not built. Run `npm install` and `npm run build` in frontend/.",
+                        status=500, mimetype="text/plain")
+    return send_file(FRONTEND_INDEX)
 
 
 @app.get("/api/img")

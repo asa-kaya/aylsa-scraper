@@ -77,6 +77,23 @@ flask --app app run --port 5001
 
 The server only listens on your own machine (`127.0.0.1`); it is not reachable from other devices.
 
+## Changing the frontend
+
+The web UI is a React + TypeScript app in `frontend/`. Its built files are committed in
+`static/app/`, so running the app needs only Python. To change the UI you need
+[Node.js](https://nodejs.org/) (20.19+ or 22.12+):
+
+```bash
+cd frontend
+npm install        # first time only
+npm run dev        # hot-reloading dev server; run `python app.py` alongside it for the API
+npm run build      # type-check and rebuild static/app/ (commit the result)
+```
+
+`npm run dev` prints a local URL (http://localhost:5173/static/app/) and forwards `/api` requests to
+Flask on port 5000. If Flask runs on another port, set `FLASK_URL`, e.g.
+`FLASK_URL=http://127.0.0.1:5001 npm run dev`.
+
 ## Using the web app
 
 1. **Paste the stream URL.** Any of these work:
