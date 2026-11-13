@@ -145,13 +145,14 @@ td.amount { font-weight: 700; white-space: nowrap; color: #000; }
 #tbody tr.focus td { background: rgba(255,59,59,.2); transition: none; }
 .modal { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center;
          padding: 20px; background: rgba(0,0,0,.65); }
-.modal-box { position: relative; width: 100%; max-width: 440px; max-height: 90vh; overflow: auto;
+.modal-box { position: relative; width: 100%; max-width: 640px; max-height: 90vh; overflow: auto;
              background: #0f0f0f; border: 1px solid var(--line); border-radius: 12px; padding: 32px 24px 16px;
              box-shadow: 0 20px 60px rgba(0,0,0,.6); }
 .modal-close { position: absolute; top: 4px; right: 6px; background: transparent; border: 0; color: var(--muted);
                font-size: 22px; padding: 4px 10px; }
 .modal-close:hover { color: var(--text); }
-#yt-card { display: flex; justify-content: center; }
+#yt-card { display: flex; justify-content: center; zoom: 1.5; }
+@media (max-width: 680px) { #yt-card { zoom: 1; } }
 .card-actions { display: flex; justify-content: center; margin-top: 12px; }
 .card-actions button { font-size: 12px; padding: 6px 12px; }
 .snap-stage { position: fixed; left: -10000px; top: 0; pointer-events: none; }
